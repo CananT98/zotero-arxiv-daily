@@ -7,6 +7,7 @@ from email.utils import parseaddr, formataddr
 import smtplib
 import datetime
 import time
+import logging
 from loguru import logger
 
 framework = """
