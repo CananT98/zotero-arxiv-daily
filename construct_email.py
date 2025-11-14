@@ -7,6 +7,7 @@ from email.utils import parseaddr, formataddr
 import smtplib
 import datetime
 import time
+import logging
 from loguru import logger
 
 framework = """
@@ -82,7 +83,7 @@ def get_block_html(title:str, authors:str, rate:str,arxiv_id:str, abstract:str, 
     </tr>
     <tr>
         <td style="font-size: 14px; color: #333; padding: 8px 0;">
-            <strong>arXiv ID:</strong> <a href="https://arxiv.org/abs/{arxiv_id}" target="_blank">{arxiv_id}</a>
+            <strong>arXiv ID:</strong> {arxiv_id}
         </td>
     </tr>
     <tr>
@@ -125,13 +126,10 @@ def render_email(papers:list[ArxivPaper]):
     
     for p in tqdm(papers,desc='Rendering Email'):
         rate = get_stars(p.score)
-        author_list = [a.name for a in p.authors]
-        num_authors = len(author_list)
-        
-        if num_authors <= 5:
-            authors = ', '.join(author_list)
-        else:
-            authors = ', '.join(author_list[:3] + ['...'] + author_list[-2:])
+        authors = [a.name for a in p.authors[:5]]
+        authors = ', '.join(authors)
+        if len(p.authors) > 5:
+            authors += ', ...'
         if p.affiliations is not None:
             affiliations = p.affiliations[:5]
             affiliations = ', '.join(affiliations)
@@ -145,25 +143,73 @@ def render_email(papers:list[ArxivPaper]):
     content = '<br>' + '</br><br>'.join(parts) + '</br>'
     return framework.replace('__CONTENT__', content)
 
-def send_email(sender:str, receiver:str, password:str,smtp_server:str,smtp_port:int, html:str,):
+def send_email(
+    sender: str, 
+    receivers: str,  # 改为接收逗号分隔的多个邮箱字符串
+    password: str, 
+    smtp_server: str, 
+    smtp_port: int, 
+    html: str
+):
+    """
+    发送邮件给多个收件人
+    receivers参数应为逗号分隔的邮箱字符串，例如: "a@example.com, b@example.com"
+    """
     def _format_addr(s):
         name, addr = parseaddr(s)
         return formataddr((Header(name, 'utf-8').encode(), addr))
+    
+    # 解析多个收件人，去除可能的空格并过滤空字符串
+    recipient_list = [email.strip() for email in receivers.split(',') if email.strip()]
+    if not recipient_list:
+        raise ValueError("没有有效的收件人邮箱地址")
 
     msg = MIMEText(html, 'html', 'utf-8')
     msg['From'] = _format_addr('Github Action <%s>' % sender)
-    msg['To'] = _format_addr('You <%s>' % receiver)
+    # 邮件头部显示所有收件人（用逗号分隔）
+    msg['To'] = ', '.join(recipient_list)
     today = datetime.datetime.now().strftime('%Y/%m/%d')
     msg['Subject'] = Header(f'Daily arXiv {today}', 'utf-8').encode()
 
+    server = None
     try:
+        # 尝试TLS连接
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
     except Exception as e:
-        logger.warning(f"Failed to use TLS. {e}")
-        logger.warning(f"Try to use SSL.")
+        logging.warning(f"TLS连接失败: {e}，尝试SSL连接...")
+        # 尝试SSL连接
         server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+    
+    try:
+        server.login(sender, password)
+        # 发送给所有解析后的收件人列表
+        server.sendmail(sender, recipient_list, msg.as_string())
+        logging.info(f"邮件成功发送给: {', '.join(recipient_list)}")
+    finally:
+        if server:
+            server.quit()
 
-    server.login(sender, password)
-    server.sendmail(sender, [receiver], msg.as_string())
-    server.quit()
+
+# def send_email(sender:str, receiver:str, password:str,smtp_server:str,smtp_port:int, html:str,):
+#     def _format_addr(s):
+#         name, addr = parseaddr(s)
+#         return formataddr((Header(name, 'utf-8').encode(), addr))
+
+#     msg = MIMEText(html, 'html', 'utf-8')
+#     msg['From'] = _format_addr('Github Action <%s>' % sender)
+#     msg['To'] = _format_addr('You <%s>' % receiver)
+#     today = datetime.datetime.now().strftime('%Y/%m/%d')
+#     msg['Subject'] = Header(f'Daily arXiv {today}', 'utf-8').encode()
+
+#     try:
+#         server = smtplib.SMTP(smtp_server, smtp_port)
+#         server.starttls()
+#     except Exception as e:
+#         logger.warning(f"Failed to use TLS. {e}")
+#         logger.warning(f"Try to use SSL.")
+#         server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+
+#     server.login(sender, password)
+#     server.sendmail(sender, [receiver], msg.as_string())
+#     server.quit()
