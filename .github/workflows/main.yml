@@ -1,8 +1,8 @@
-name: Send emails daily
+name: arxiv daily
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 22 * * *'
+    - cron: '0 20 * * *'
 
 jobs:
   calculate-and-send:
